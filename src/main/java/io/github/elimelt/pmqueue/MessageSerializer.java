@@ -1,4 +1,4 @@
-package distributedutils;
+package io.github.elimelt.pmqueue;
 
 import java.io.IOException;
 import java.nio.Buffer;
@@ -34,6 +34,10 @@ class MessageSerializer {
     }
 
     public static byte[] serialize(Message message) throws IOException {
+        if (message == null) {
+            throw new IOException("Message is null");
+        }
+
         byte[] data = message.getData();
         int totalLength = HEADER_SIZE + data.length;
 
