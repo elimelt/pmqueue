@@ -37,6 +37,7 @@
   </scm>
 
   <properties>
+    <revision>${project.version}</revision>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <maven.compiler.source>11</maven.compiler.source>
     <maven.compiler.target>11</maven.compiler.target>
