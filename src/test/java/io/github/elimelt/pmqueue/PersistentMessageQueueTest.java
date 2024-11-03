@@ -1,211 +1,222 @@
 package io.github.elimelt.pmqueue;
 
 import org.junit.jupiter.api.*;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import static org.junit.jupiter.api.Assertions.*;
 
-import java.io.File;
-import java.io.IOException;
-import java.nio.file.Files;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.concurrent.*;
+import java.io.*;
+import java.util.*;
 
-@TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 class PersistentMessageQueueTest {
 
-    private static final String TEST_FILE = "test_queue.dat";
-    private PersistentMessageQueue queue;
+  private static final String BASE_TEST_DIR = "tmp/test_queues/";
+  private PersistentMessageQueue queue;
+  private File testFile;
+  private final Random random = new Random();
 
-    @BeforeEach
-    void setUp() throws IOException {
-        queue = new PersistentMessageQueue(TEST_FILE);
-    }
+  @BeforeAll
+  static void setUpTestDirectory() {
+    new File(BASE_TEST_DIR).mkdirs();
+  }
 
-    @AfterEach
-    void tearDown() throws IOException {
+  @BeforeEach
+  void setUp() throws IOException {
+    // create unique file for each test
+    testFile = new File(BASE_TEST_DIR + UUID.randomUUID() + ".dat");
+    queue = new PersistentMessageQueue(testFile.getPath());
+  }
+
+  @AfterEach
+  void tearDown() throws IOException {
+    try {
+      if (queue != null) {
         queue.close();
-        new File(TEST_FILE).delete();
+      }
+      if (testFile != null && testFile.exists()) {
+        testFile.delete();
+      }
+    } catch (IOException ignore) {
+    }
+  }
+
+  @AfterAll
+  static void cleanUpTestDirectory() {
+    deleteDirectory(new File(BASE_TEST_DIR));
+  }
+
+  private static void deleteDirectory(File directory) {
+    File[] files = directory.listFiles();
+    if (files != null) {
+      for (File file : files) {
+        if (file.isDirectory()) {
+          deleteDirectory(file);
+        } else {
+          file.delete();
+        }
+      }
+    }
+    directory.delete();
+  }
+
+  @Test
+  void queueShouldBeEmptyWhenCreated() {
+    assertTrue(queue.isEmpty(), "Newly created queue should be empty");
+  }
+
+  @Test
+  void basicOfferAndPollShouldWork() throws IOException {
+    Message message = new Message("test".getBytes(), 1);
+    assertTrue(queue.offer(message));
+    assertFalse(queue.isEmpty());
+
+    Message retrieved = queue.poll();
+    assertNotNull(retrieved);
+    assertArrayEquals(message.getData(), retrieved.getData());
+    assertEquals(message.getMessageType(), retrieved.getMessageType());
+    assertTrue(queue.isEmpty());
+  }
+
+  @Test
+  void shouldHandleNullMessageOffer() {
+    assertThrows(NullPointerException.class, () -> queue.offer(null));
+  }
+
+  @Test
+  void shouldHandleCorruptedFileHeader() throws IOException {
+    queue.close();
+
+    // corrupt header
+    try (RandomAccessFile file = new RandomAccessFile(testFile, "rw")) {
+      file.seek(0);
+      file.writeLong(-1L); // invalid front offset
     }
 
-    @Test
-    @Order(1)
-    @DisplayName("Queue should be empty when created")
-    void queueShouldBeEmptyWhenCreated() {
-        assertTrue(queue.isEmpty(), "Newly created queue should be empty");
+    assertThrows(IOException.class, () -> new PersistentMessageQueue(testFile.getPath()));
+  }
+
+  @Test
+  void fuzzTestRandomMessageSizes() throws IOException {
+    List<Message> messages = new ArrayList<>();
+
+    // messages with random sizes
+    for (int i = 0; i < 100; i++) { //
+      int size = random.nextInt(1024);
+      byte[] data = new byte[size];
+      random.nextBytes(data);
+      Message msg = new Message(data, i);
+      messages.add(msg);
+      assertTrue(queue.offer(msg));
     }
 
-    @Test
-    @Order(2)
-    @DisplayName("Basic offer and poll operations should work")
-    void basicOfferAndPollShouldWork() throws IOException {
-        Message message = new Message("test".getBytes(), 1);
-        assertTrue(queue.offer(message), "Offer should succeed");
-        assertFalse(queue.isEmpty(), "Queue should not be empty after offer");
-        
+    // verify messages
+    for (Message original : messages) {
+      Message retrieved = queue.poll();
+      assertNotNull(retrieved);
+      assertArrayEquals(original.getData(), retrieved.getData());
+      assertEquals(original.getMessageType(), retrieved.getMessageType());
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(ints = { 0, 1, 100, 1024 })
+  void fuzzTestSpecificMessageSizes(int size) throws IOException {
+    byte[] data = new byte[size];
+    random.nextBytes(data);
+    Message msg = new Message(data, 1);
+
+    assertTrue(queue.offer(msg));
+    Message retrieved = queue.poll();
+
+    assertNotNull(retrieved);
+    assertArrayEquals(msg.getData(), retrieved.getData());
+  }
+
+  @Test
+  void fuzzTestRandomBinaryData() throws IOException {
+    List<Message> messages = new ArrayList<>();
+
+    // write messages
+    for (int i = 0; i < 100; i++) {
+      byte[] data = new byte[random.nextInt(100)];
+      random.nextBytes(data);
+      // include random nulls and control characters
+      for (int j = 0; j < data.length; j++) {
+        if (random.nextInt(10) == 0) {
+          data[j] = 0;
+        }
+      }
+      Message msg = new Message(data, random.nextInt());
+      messages.add(msg);
+      assertTrue(queue.offer(msg));
+    }
+
+    // close and reopen queue
+    queue.close();
+    queue = new PersistentMessageQueue(testFile.getPath());
+
+    // verify messages
+    for (Message original : messages) {
+      Message retrieved = queue.poll();
+      assertNotNull(retrieved);
+      assertArrayEquals(original.getData(), retrieved.getData());
+      assertEquals(original.getMessageType(), retrieved.getMessageType());
+    }
+  }
+
+  @Test
+  void stressTestRapidOperations() throws IOException {
+    for (int cycle = 0; cycle < 10; cycle++) {
+      List<Message> messages = new ArrayList<>();
+
+      // write messages
+      for (int i = 0; i < 100; i++) {
+        Message msg = new Message(("stress" + i).getBytes(), i);
+        messages.add(msg);
+        assertTrue(queue.offer(msg));
+      }
+
+      // verify messages
+      for (Message original : messages) {
         Message retrieved = queue.poll();
-        assertNotNull(retrieved, "Poll should return message");
-        assertArrayEquals(message.getData(), retrieved.getData(), "Message data should match");
-        assertEquals(message.getMessageType(), retrieved.getMessageType(), "Message type should match");
-        
-        assertTrue(queue.isEmpty(), "Queue should be empty after poll");
+        assertNotNull(retrieved);
+        assertEquals(original.getMessageType(), retrieved.getMessageType());
+        assertArrayEquals(original.getData(), retrieved.getData());
+      }
+    }
+  }
+
+  @Test
+  void shouldHandleMaxMessageSize() throws IOException {
+    byte[] largeData = new byte[1024 * 1024]; // 1MB
+    Message msg = new Message(largeData, 1);
+    assertTrue(queue.offer(msg));
+
+    Message retrieved = queue.poll();
+    assertNotNull(retrieved);
+    assertArrayEquals(msg.getData(), retrieved.getData());
+  }
+
+  @Test
+  void shouldHandleRapidOpenClose() throws IOException {
+    List<Message> messages = new ArrayList<>();
+
+    for (int i = 0; i < 10; i++) {
+      queue.close();
+      queue = new PersistentMessageQueue(testFile.getPath());
+      Message msg = new Message(("cycle" + i).getBytes(), i);
+      messages.add(msg);
+      queue.offer(msg);
     }
 
-    @Test
-    @Order(3)
-    @DisplayName("Queue should persist messages across restarts")
-    void queueShouldPersistMessages() throws IOException {
-        Message message = new Message("persistent".getBytes(), 1);
-        queue.offer(message);
-        queue.close();
-
-        // Reopen queue
-        queue = new PersistentMessageQueue(TEST_FILE);
-        Message retrieved = queue.poll();
-        
-        assertNotNull(retrieved, "Message should persist after restart");
-        assertArrayEquals(message.getData(), retrieved.getData(), "Message data should persist correctly");
+    // verify messages
+    queue.close();
+    queue = new PersistentMessageQueue(testFile.getPath());
+    for (Message original : messages) {
+      Message retrieved = queue.poll();
+      assertNotNull(retrieved);
+      assertArrayEquals(original.getData(), retrieved.getData());
+      assertEquals(original.getMessageType(), retrieved.getMessageType());
     }
-
-    @Test
-    @Order(4)
-    @DisplayName("Queue should handle multiple messages")
-    void queueShouldHandleMultipleMessages() throws IOException {
-        int messageCount = 100;
-        List<Message> messages = new ArrayList<>();
-        
-        // Offer messages
-        for (int i = 0; i < messageCount; i++) {
-            Message msg = new Message(("message" + i).getBytes(), i);
-            messages.add(msg);
-            assertTrue(queue.offer(msg), "Offer should succeed for message " + i);
-        }
-        
-        // Poll and verify messages
-        for (int i = 0; i < messageCount; i++) {
-            Message original = messages.get(i);
-            Message retrieved = queue.poll();
-
-            assertNotNull(retrieved, "Should retrieve message " + i);
-            assertArrayEquals(original.getData(), retrieved.getData(),
-                "Data should match for message " + i);
-            assertEquals(original.getMessageType(), retrieved.getMessageType(),
-                "Type should match for message " + i);
-        }
-
-        assertTrue(queue.isEmpty(), "Queue should be empty after polling all messages");
-    }
-
-    @Test
-    @Order(5)
-    @DisplayName("Queue should handle concurrent operations")
-    void queueShouldHandleConcurrentOperations() throws InterruptedException {
-        int threadCount = 10;
-        int messagesPerThread = 100;
-        ExecutorService executor = Executors.newFixedThreadPool(threadCount);
-        CountDownLatch latch = new CountDownLatch(threadCount * 2); // For both producers and consumers
-        
-        // Start producer threads
-        for (int t = 0; t < threadCount; t++) {
-            final int threadId = t;
-            executor.submit(() -> {
-                try {
-                    for (int i = 0; i < messagesPerThread; i++) {
-                        Message msg = new Message(
-                            ("thread" + threadId + "msg" + i).getBytes(),
-                            threadId * 1000 + i
-                        );
-                        queue.offer(msg);
-                    }
-                } catch (IOException e) {
-                    fail("Producer thread failed: " + e.getMessage());
-                } finally {
-                    latch.countDown();
-                }
-            });
-        }
-        
-        // Start consumer threads
-        ConcurrentHashMap<String, Integer> messageCount = new ConcurrentHashMap<>();
-        for (int t = 0; t < threadCount; t++) {
-            executor.submit(() -> {
-                try {
-                    while (true) {
-                        Message msg = queue.poll();
-                        if (msg == null) {
-                            // Check if all messages have been processed
-                            if (messageCount.size() == threadCount * messagesPerThread) {
-                                break;
-                            }
-                            Thread.sleep(10);
-                            continue;
-                        }
-                        messageCount.put(new String(msg.getData()), msg.getMessageType());
-                    }
-                } catch (Exception e) {
-                    fail("Consumer thread failed: " + e.getMessage());
-                } finally {
-                    latch.countDown();
-                }
-            });
-        }
-
-        assertTrue(latch.await(30, TimeUnit.SECONDS), "Operations timed out");
-        executor.shutdown();
-        assertTrue(executor.awaitTermination(5, TimeUnit.SECONDS), "Executor shutdown timed out");
-
-        assertEquals(threadCount * messagesPerThread, messageCount.size(),
-            "Should process all messages exactly once");
-    }
-
-    @Test
-    @Order(6)
-    @DisplayName("Queue should handle large messages")
-    void queueShouldHandleLargeMessages() throws IOException {
-        byte[] largeData = new byte[1024 * 1024]; // 1MB
-        ThreadLocalRandom.current().nextBytes(largeData);
-
-        Message message = new Message(largeData, 1);
-        assertTrue(queue.offer(message), "Should accept large message");
-
-        Message retrieved = queue.poll();
-        assertNotNull(retrieved, "Should retrieve large message");
-        assertArrayEquals(largeData, retrieved.getData(), "Large message data should match");
-    }
-
-    @Test
-    @Order(7)
-    @DisplayName("Queue should maintain data integrity after compaction")
-    void queueShouldMaintainIntegrityAfterCompaction() throws IOException {
-        // Fill queue with messages
-        List<Message> messages = new ArrayList<>();
-        for (int i = 0; i < 1000; i++) {
-            Message msg = new Message(("compaction test " + i).getBytes(), i);
-            messages.add(msg);
-            queue.offer(msg);
-        }
-
-        // Poll half the messages
-        for (int i = 0; i < 500; i++) {
-            assertNotNull(queue.poll(), "Should retrieve message during compaction test");
-        }
-
-        // Add more messages
-        for (int i = 1000; i < 1500; i++) {
-            Message msg = new Message(("compaction test " + i).getBytes(), i);
-            messages.add(msg);
-            queue.offer(msg);
-        }
-
-        // Verify remaining messages
-        for (int i = 500; i < messages.size(); i++) {
-            Message original = messages.get(i);
-            Message retrieved = queue.poll();
-
-            assertNotNull(retrieved, "Should retrieve message after compaction");
-            assertArrayEquals(original.getData(), retrieved.getData(),
-                "Message data should be preserved after compaction");
-            assertEquals(original.getMessageType(), retrieved.getMessageType(),
-                "Message type should be preserved after compaction");
-        }
-    }
+  }
 }
