@@ -1,0 +1,1 @@
+packageSearchIndex = [{"l":"All Packages","u":"allpackages-index.html"},{"l":"io.github.elimelt.pmqueue"},{"l":"io.github.elimelt.pmqueue.consumer"},{"l":"io.github.elimelt.pmqueue.core"},{"l":"io.github.elimelt.pmqueue.message"},{"l":"io.github.elimelt.pmqueue.producer"}];updateSearchResults();

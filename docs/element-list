@@ -1,0 +1,5 @@
+io.github.elimelt.pmqueue
+io.github.elimelt.pmqueue.consumer
+io.github.elimelt.pmqueue.core
+io.github.elimelt.pmqueue.message
+io.github.elimelt.pmqueue.producer
