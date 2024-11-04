@@ -1,8 +1,9 @@
-package io.github.elimelt.pmqueue;
+package io.github.elimelt.pmqueue.message;
 
 import java.io.IOException;
 import java.nio.Buffer;
 import java.nio.ByteBuffer;
+
 import sun.misc.Unsafe;
 import java.lang.reflect.Field;
 
@@ -35,8 +36,11 @@ import java.lang.reflect.Field;
  * should only be used by the {@link Message} class's serialization mechanism.
  */
 @SuppressWarnings("deprecation")
-class MessageSerializer {
+public class MessageSerializer {
   private static final int HEADER_SIZE = 16;
+
+  private MessageSerializer() {
+  }
 
   private static final ThreadLocal<ByteBuffer> threadLocalBuffer = ThreadLocal
       .withInitial(() -> ByteBuffer.allocateDirect(4096));

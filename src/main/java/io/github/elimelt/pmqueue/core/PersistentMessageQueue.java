@@ -1,6 +1,5 @@
-package io.github.elimelt.pmqueue;
+package io.github.elimelt.pmqueue.core;
 
-import java.io.Closeable;
 import java.io.File;
 import java.io.IOException;
 import java.io.RandomAccessFile;
@@ -8,6 +7,11 @@ import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.zip.CRC32;
+
+import io.github.elimelt.pmqueue.MessageQueue;
+import io.github.elimelt.pmqueue.QueueConfig;
+import io.github.elimelt.pmqueue.message.Message;
+import io.github.elimelt.pmqueue.message.MessageSerializer;
 
 /**
  * A high-performance, persistent queue implementation for storing messages on
@@ -74,17 +78,49 @@ import java.util.zip.CRC32;
  * <li>Default buffer size is 1MB, aligned to page boundaries
  * </ul>
  */
-public class PersistentMessageQueue implements Closeable {
-  private static final boolean DEBUG = false;
-  private static final int QUEUE_HEADER_SIZE = 24;
-  private static final int BLOCK_HEADER_SIZE = 8;
-  private static final long MAX_FILE_SIZE = 1024L * 1024L * 1024L;
-  private static final int INITIAL_FILE_SIZE = QUEUE_HEADER_SIZE;
-  private static final int PAGE_SIZE = 4096;
-  private static final int DEFAULT_BUFFER_SIZE = (1024 * 1024 / PAGE_SIZE) * PAGE_SIZE;
-  private static final int MAX_BUFFER_SIZE = (8 * 1024 * 1024 / PAGE_SIZE) * PAGE_SIZE;
-  private static final int BATCH_THRESHOLD = 64;
+public class PersistentMessageQueue implements MessageQueue {
+  /*
+   * File format:
+   * +-----------------+-----------------+-----------------+
+   * | Front offset | Rear offset | Reserved |
+   * +-----------------+-----------------+-----------------+
+   * | Message size | CRC32 checksum | Message data |
+   * +-----------------+-----------------+-----------------+
+   * | ... | ... | ... |
+   * +-----------------+-----------------+-----------------+
+   * | Message size | CRC32 checksum | Message data |
+   * +-----------------+-----------------+-----------------+
+   * | ... | ... | ... |
+   * +-----------------+-----------------+-----------------+
+   * | ... | ... | ... |
+   * +-----------------+-----------------+-----------------+
+   */
 
+  /**
+   * The size of the queue header in bytes.
+   */
+  public static final int QUEUE_HEADER_SIZE = 24;
+
+  /**
+   * The size of the block header in bytes.
+   */
+  public static final int BLOCK_HEADER_SIZE = 8;
+
+  /**
+   * The size of a page in bytes.
+   */
+  public static final int PAGE_SIZE = 4096;
+
+  // default configuration
+  private static boolean debug = false;
+  private static boolean shouldChecksum = true;
+  private static long maxFileSize = 1024L * 1024L * 1024L; // 1GB
+  private static int initialFileSize = QUEUE_HEADER_SIZE;
+  private static int defaultBufferSize = (1024 * 1024 / PAGE_SIZE) * PAGE_SIZE;
+  private static int maxBufferSize = (8 * 1024 * 1024 / PAGE_SIZE) * PAGE_SIZE;
+  private static int batchThreshold = 64;
+
+  // instance variables
   private final ByteBuffer writeBatchBuffer;
   private int batchSize = 0;
   private long batchStartOffset;
@@ -97,11 +133,46 @@ public class PersistentMessageQueue implements Closeable {
   private final CRC32 checksumCalculator;
 
   /**
-   * Creates a new persistent message queue or opens an existing one.
+   * Creates a new persistent message queue with custom configuration.
    *
-   * <p>
-   * If the file doesn't exist, it will be created with initial metadata.
-   * If it exists, the queue metadata will be loaded and validated.
+   * @param config the configuration for the queue
+   * @throws IOException       if the file cannot be created/opened or if the
+   *                           existing file is corrupted
+   * @throws SecurityException if the application doesn't have required file
+   *                           permissions
+   */
+  public PersistentMessageQueue(QueueConfig config) throws IOException {
+    // configure
+    debug = config.isDebugEnabled();
+    shouldChecksum = config.isChecksumEnabled();
+    maxFileSize = config.getMaxFileSize();
+    initialFileSize = config.getInitialFileSize();
+    defaultBufferSize = alignToPageSize(config.getDefaultBufferSize());
+    maxBufferSize = alignToPageSize(config.getMaxBufferSize());
+    batchThreshold = config.getBatchThreshold();
+
+    // init queue
+    File f = new File(config.getFilePath());
+    boolean isNew = !f.exists();
+    this.file = new RandomAccessFile(f, "rw");
+    this.channel = file.getChannel();
+
+    this.messageBuffer = ByteBuffer.allocateDirect(defaultBufferSize);
+    this.writeBatchBuffer = ByteBuffer.allocateDirect(maxBufferSize);
+    this.lock = new ReentrantLock(true);
+
+    this.checksumCalculator = shouldChecksum ? new CRC32() : null;
+
+    if (isNew) {
+      initializeNewFile();
+    } else {
+      loadMetadata();
+    }
+  }
+
+  /**
+   * Creates a new persistent message queue with default configuration.
+   * This constructor is maintained for backward compatibility.
    *
    * @param filename the path to the queue file
    * @throws IOException       if the file cannot be created/opened or if the
@@ -110,21 +181,12 @@ public class PersistentMessageQueue implements Closeable {
    *                           permissions
    */
   public PersistentMessageQueue(String filename) throws IOException {
-    File f = new File(filename);
-    boolean isNew = !f.exists();
-    this.file = new RandomAccessFile(f, "rw");
-    this.channel = file.getChannel();
+    this(new QueueConfig.Builder().filePath(filename).build());
+  }
 
-    this.messageBuffer = ByteBuffer.allocateDirect(DEFAULT_BUFFER_SIZE);
-    this.writeBatchBuffer = ByteBuffer.allocateDirect(MAX_BUFFER_SIZE);
-    this.lock = new ReentrantLock(true);
-    this.checksumCalculator = new CRC32();
-
-    if (isNew) {
-      initializeNewFile();
-    } else {
-      loadMetadata();
-    }
+  // align buffer sizes to page size
+  private static int alignToPageSize(int size) {
+    return (size / PAGE_SIZE) * PAGE_SIZE;
   }
 
   /**
@@ -159,27 +221,29 @@ public class PersistentMessageQueue implements Closeable {
 
     lock.lock();
     try {
-      if (rearOffset + totalSize > MAX_FILE_SIZE)
+      if (rearOffset + totalSize > maxFileSize)
         return false;
 
       long requiredLength = rearOffset + totalSize;
       if (requiredLength > file.length()) {
-        long newSize = Math.min(MAX_FILE_SIZE,
-            Math.max(file.length() * 2, requiredLength + DEFAULT_BUFFER_SIZE));
+        long newSize = Math.min(maxFileSize,
+            Math.max(file.length() * 2, requiredLength + defaultBufferSize));
         file.setLength(newSize);
       }
+      if (shouldChecksum) {
+        checksumCalculator.reset();
+        checksumCalculator.update(serialized);
+      }
 
-      checksumCalculator.reset();
-      checksumCalculator.update(serialized);
-      int checksum = (int) checksumCalculator.getValue();
+      int checksum = shouldChecksum ? (int) checksumCalculator.getValue() : 0;
 
       if (batchSize == 0) {
         batchStartOffset = rearOffset;
       }
 
-      if (serialized.length < DEFAULT_BUFFER_SIZE / 4 &&
-          totalSize <= MAX_BUFFER_SIZE - writeBatchBuffer.position() &&
-          batchSize < BATCH_THRESHOLD) {
+      if (serialized.length < defaultBufferSize / 4 &&
+          totalSize <= maxBufferSize - writeBatchBuffer.position() &&
+          batchSize < batchThreshold) {
 
         writeBatchBuffer.putInt(serialized.length);
         writeBatchBuffer.putInt(checksum);
@@ -188,7 +252,7 @@ public class PersistentMessageQueue implements Closeable {
 
         rearOffset += totalSize;
 
-        if (batchSize >= BATCH_THRESHOLD ||
+        if (batchSize >= batchThreshold ||
             writeBatchBuffer.position() >= writeBatchBuffer.capacity() / 2) {
           flushBatch();
         }
@@ -199,7 +263,7 @@ public class PersistentMessageQueue implements Closeable {
 
         if (serialized.length + BLOCK_HEADER_SIZE > messageBuffer.capacity()) {
           messageBuffer = ByteBuffer.allocateDirect(
-              Math.min(MAX_BUFFER_SIZE, serialized.length + BLOCK_HEADER_SIZE));
+              Math.min(maxBufferSize, serialized.length + BLOCK_HEADER_SIZE));
         }
 
         messageBuffer.clear();
@@ -279,10 +343,12 @@ public class PersistentMessageQueue implements Closeable {
 
       byte[] data = new byte[messageSize];
       dataBuffer.get(data);
+      if (shouldChecksum) {
+        checksumCalculator.reset();
+        checksumCalculator.update(data);
+      }
 
-      checksumCalculator.reset();
-      checksumCalculator.update(data);
-      int calculatedChecksum = (int) checksumCalculator.getValue();
+      int calculatedChecksum = shouldChecksum ? (int) checksumCalculator.getValue() : 0;
 
       if (storedChecksum != calculatedChecksum) {
         throw new IOException(String.format(
@@ -333,7 +399,12 @@ public class PersistentMessageQueue implements Closeable {
     }
   }
 
-  private void flushBatch() throws IOException {
+  /**
+   * Flushes the current write batch to disk.
+   *
+   * @throws IOException if an I/O error occurs
+   */
+  public void flushBatch() throws IOException {
     if (batchSize > 0) {
       writeBatchBuffer.flip();
       channel.write(writeBatchBuffer, batchStartOffset);
@@ -389,7 +460,7 @@ public class PersistentMessageQueue implements Closeable {
   }
 
   private void initializeNewFile() throws IOException {
-    file.setLength(INITIAL_FILE_SIZE);
+    file.setLength(initialFileSize);
     frontOffset = QUEUE_HEADER_SIZE;
     rearOffset = QUEUE_HEADER_SIZE;
     saveMetadata();
@@ -397,7 +468,7 @@ public class PersistentMessageQueue implements Closeable {
 
   @SuppressWarnings("unused")
   private void debug(String format, Object... args) {
-    if (DEBUG) {
+    if (debug) {
       System.out.printf("[DEBUG] " + format + "%n", args);
     }
   }

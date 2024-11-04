@@ -1,6 +1,9 @@
-package io.github.elimelt.pmqueue;
+package io.github.elimelt.pmqueue.message;
 
 import org.junit.jupiter.api.Test;
+
+import io.github.elimelt.pmqueue.message.Message;
+
 import org.junit.jupiter.api.DisplayName;
 import static org.junit.jupiter.api.Assertions.*;
 

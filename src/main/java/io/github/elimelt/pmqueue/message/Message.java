@@ -1,4 +1,4 @@
-package io.github.elimelt.pmqueue;
+package io.github.elimelt.pmqueue.message;
 
 import java.io.IOException;
 import java.io.ObjectInputStream;
@@ -38,16 +38,43 @@ import java.lang.reflect.Field;
 public class Message implements Serializable {
   private static final long serialVersionUID = 1L;
 
+  /**
+   * Soft reference to cache the hash code for this message.
+   */
   private transient SoftReference<Integer> hashCache;
+  /**
+   * The message data.
+   */
   private final byte[] data;
+  /**
+   * The timestamp when this message was created.
+   */
   private final long timestamp;
+  /**
+   * The message type identifier.
+   */
   private final int messageType;
+  /**
+   * The length of the message data.
+   */
   private final int length;
 
+  /**
+   * The Unsafe instance for direct memory access.
+   */
   private static final Unsafe unsafe;
+  /**
+   * The offset of the data field.
+   */
   @SuppressWarnings("unused")
   private static final long dataOffset;
+  /**
+   * The offset of the timestamp field.
+   */
   private static final long timestampOffset;
+  /**
+   * The offset of the messageType field.
+   */
   private static final long messageTypeOffset;
 
   static {
@@ -74,6 +101,9 @@ public class Message implements Serializable {
    * @throws NullPointerException if data is null
    */
   public Message(byte[] data, int messageType) {
+    if (data == null) {
+      throw new NullPointerException("Message data cannot be null");
+    }
     int dataLength = data.length;
     this.data = new byte[dataLength];
     unsafe.copyMemory(data, Unsafe.ARRAY_BYTE_BASE_OFFSET,
@@ -91,6 +121,9 @@ public class Message implements Serializable {
    * @return a copy of the message data as a byte array
    */
   public byte[] getData() {
+    if (data == null) {
+      return null;
+    }
     byte[] copy = new byte[length];
     unsafe.copyMemory(data, Unsafe.ARRAY_BYTE_BASE_OFFSET,
         copy, Unsafe.ARRAY_BYTE_BASE_OFFSET,

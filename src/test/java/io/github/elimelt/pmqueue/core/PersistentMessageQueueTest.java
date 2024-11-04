@@ -1,8 +1,12 @@
-package io.github.elimelt.pmqueue;
+package io.github.elimelt.pmqueue.core;
 
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+
+import io.github.elimelt.pmqueue.core.PersistentMessageQueue;
+import io.github.elimelt.pmqueue.message.Message;
+
 import static org.junit.jupiter.api.Assertions.*;
 
 import java.io.*;
