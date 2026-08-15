@@ -100,8 +100,10 @@ public class PersistentMessageQueue implements MessageQueue {
 
   /**
    * The size of the queue header in bytes.
+   *
+   * @see QueueConfig#QUEUE_HEADER_SIZE
    */
-  public static final int QUEUE_HEADER_SIZE = 24;
+  public static final int QUEUE_HEADER_SIZE = QueueConfig.QUEUE_HEADER_SIZE;
 
   /**
    * The size of the block header in bytes.

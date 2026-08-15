@@ -118,13 +118,11 @@ class QueueConfigTest {
   }
 
   @Test
-  @DisplayName("Builder should handle null file path")
-  void builderShouldHandleNullFilePath() {
-    QueueConfig config = new QueueConfig.Builder()
-        .filePath(null)
-        .build();
+  @DisplayName("Builder should reject null file path")
+  void builderShouldRejectNullFilePath() {
+    QueueConfig.Builder builder = new QueueConfig.Builder();
 
-    assertNull(config.getFilePath());
+    assertThrows(NullPointerException.class, () -> builder.filePath(null));
   }
 
   @Test

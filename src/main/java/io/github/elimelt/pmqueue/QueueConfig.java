@@ -1,6 +1,6 @@
 package io.github.elimelt.pmqueue;
 
-import io.github.elimelt.pmqueue.core.PersistentMessageQueue;
+import java.util.Objects;
 
 /**
  * Configuration for a message queue.
@@ -22,6 +22,11 @@ import io.github.elimelt.pmqueue.core.PersistentMessageQueue;
  * }</pre>
  */
 public class QueueConfig {
+  /**
+   * The size of the queue file header in bytes.
+   */
+  public static final int QUEUE_HEADER_SIZE = 24;
+
   private final String filePath;
   private final boolean debugEnabled;
   private final boolean checksumEnabled;
@@ -52,7 +57,7 @@ public class QueueConfig {
     private boolean debugEnabled = false;
     private boolean checksumEnabled = true;
     private long maxFileSize = 1024L * 1024L * 1024L; // 1GB
-    private int initialFileSize = PersistentMessageQueue.QUEUE_HEADER_SIZE;
+    private int initialFileSize = QUEUE_HEADER_SIZE;
     private int defaultBufferSize = 1024 * 1024; // 1MB
     private int maxBufferSize = 8 * 1024 * 1024; // 8MB
     private int batchThreshold = 64;
@@ -70,7 +75,7 @@ public class QueueConfig {
      * @return this
      */
     public Builder filePath(String filePath) {
-      this.filePath = filePath;
+      this.filePath = Objects.requireNonNull(filePath, "filePath must not be null");
       return this;
     }
 
@@ -161,8 +166,8 @@ public class QueueConfig {
       if (maxBufferSize < defaultBufferSize) {
         throw new IllegalArgumentException("maxBufferSize must be >= defaultBufferSize");
       }
-      if (initialFileSize < PersistentMessageQueue.QUEUE_HEADER_SIZE) {
-        throw new IllegalArgumentException("initialFileSize must be >= " + PersistentMessageQueue.QUEUE_HEADER_SIZE);
+      if (initialFileSize < QUEUE_HEADER_SIZE) {
+        throw new IllegalArgumentException("initialFileSize must be >= " + QUEUE_HEADER_SIZE);
       }
       if (batchThreshold <= 0) {
         throw new IllegalArgumentException("batchThreshold must be > 0");
