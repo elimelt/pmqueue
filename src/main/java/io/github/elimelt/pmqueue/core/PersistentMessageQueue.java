@@ -6,6 +6,8 @@ import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 import java.util.zip.CRC32;
 
 import io.github.elimelt.pmqueue.MessageQueue;
@@ -111,14 +113,16 @@ public class PersistentMessageQueue implements MessageQueue {
    */
   public static final int PAGE_SIZE = 4096;
 
-  // default configuration
-  private static boolean debug = false;
-  private static boolean shouldChecksum = true;
-  private static long maxFileSize = 1024L * 1024L * 1024L; // 1GB
-  private static int initialFileSize = QUEUE_HEADER_SIZE;
-  private static int defaultBufferSize = (1024 * 1024 / PAGE_SIZE) * PAGE_SIZE;
-  private static int maxBufferSize = (8 * 1024 * 1024 / PAGE_SIZE) * PAGE_SIZE;
-  private static int batchThreshold = 64;
+  private static final Logger LOGGER = Logger.getLogger(PersistentMessageQueue.class.getName());
+
+  // per-instance configuration
+  private final boolean debug;
+  private final boolean shouldChecksum;
+  private final long maxFileSize;
+  private final int initialFileSize;
+  private final int defaultBufferSize;
+  private final int maxBufferSize;
+  private final int batchThreshold;
 
   // instance variables
   private final ByteBuffer writeBatchBuffer;
@@ -143,13 +147,13 @@ public class PersistentMessageQueue implements MessageQueue {
    */
   public PersistentMessageQueue(QueueConfig config) throws IOException {
     // configure
-    debug = config.isDebugEnabled();
-    shouldChecksum = config.isChecksumEnabled();
-    maxFileSize = config.getMaxFileSize();
-    initialFileSize = config.getInitialFileSize();
-    defaultBufferSize = alignToPageSize(config.getDefaultBufferSize());
-    maxBufferSize = alignToPageSize(config.getMaxBufferSize());
-    batchThreshold = config.getBatchThreshold();
+    this.debug = config.isDebugEnabled();
+    this.shouldChecksum = config.isChecksumEnabled();
+    this.maxFileSize = config.getMaxFileSize();
+    this.initialFileSize = config.getInitialFileSize();
+    this.defaultBufferSize = alignToPageSize(config.getDefaultBufferSize());
+    this.maxBufferSize = alignToPageSize(config.getMaxBufferSize());
+    this.batchThreshold = config.getBatchThreshold();
 
     // init queue
     File f = new File(config.getFilePath());
@@ -163,10 +167,27 @@ public class PersistentMessageQueue implements MessageQueue {
 
     this.checksumCalculator = shouldChecksum ? new CRC32() : null;
 
-    if (isNew) {
-      initializeNewFile();
-    } else {
-      loadMetadata();
+    debug("Opening queue file=%s isNew=%b checksum=%b maxFileSize=%d", f.getPath(), isNew, shouldChecksum,
+        maxFileSize);
+
+    try {
+      if (isNew) {
+        initializeNewFile();
+      } else {
+        loadMetadata();
+      }
+    } catch (IOException | RuntimeException e) {
+      try {
+        channel.close();
+      } catch (IOException closeException) {
+        e.addSuppressed(closeException);
+      }
+      try {
+        file.close();
+      } catch (IOException closeException) {
+        e.addSuppressed(closeException);
+      }
+      throw e;
     }
   }
 
@@ -360,6 +381,7 @@ public class PersistentMessageQueue implements MessageQueue {
       frontOffset += BLOCK_HEADER_SIZE + messageSize;
       saveMetadata();
 
+      debug("Polled message of size %d, new frontOffset=%d", messageSize, frontOffset);
       return message;
     } finally {
       lock.unlock();
@@ -406,6 +428,7 @@ public class PersistentMessageQueue implements MessageQueue {
    */
   public void flushBatch() throws IOException {
     if (batchSize > 0) {
+      debug("Flushing batch of %d messages at offset %d", batchSize, batchStartOffset);
       writeBatchBuffer.flip();
       channel.write(writeBatchBuffer, batchStartOffset);
       writeBatchBuffer.clear();
@@ -466,10 +489,9 @@ public class PersistentMessageQueue implements MessageQueue {
     saveMetadata();
   }
 
-  @SuppressWarnings("unused")
   private void debug(String format, Object... args) {
-    if (debug) {
-      System.out.printf("[DEBUG] " + format + "%n", args);
+    if (debug && LOGGER.isLoggable(Level.FINE)) {
+      LOGGER.fine(String.format(format, args));
     }
   }
 }
