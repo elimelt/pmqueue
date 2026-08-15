@@ -1,33 +1,32 @@
-mv docs docs_old
+#!/bin/sh
+# Regenerate docs/ from current source using the JDK javadoc tool directly
+# (no Maven required).
+set -e
 
-# build javadoc jar
-mvn org.apache.maven.plugins:maven-javadoc-plugin:3.5.0:jar
-
-if [ ! -d docs ]; then
-    mkdir docs
+# Locate a javadoc binary: prefer one on PATH, else fall back to the
+# in-repo JDK downloaded by run_tests.sh.
+if command -v javadoc >/dev/null 2>&1; then
+    JAVADOC=javadoc
+else
+    JAVADOC=$(find target/jdk -type f -name javadoc -path '*/bin/*' 2>/dev/null | head -n 1)
+    if [ -z "$JAVADOC" ]; then
+        echo "error: no javadoc binary found on PATH or under target/jdk." >&2
+        echo "Run ./run_tests.sh first to download the JDK, then retry." >&2
+        exit 1
+    fi
 fi
 
-cp target/*-javadoc.jar docs/javadoc.jar
+# Move the current docs out of the way so generation always starts from a
+# fresh directory; only remove the old copy once generation succeeds.
+if [ -d docs ]; then
+    mv docs docs_old
+fi
 
+"$JAVADOC" \
+    -d docs \
+    -sourcepath src/main/java \
+    -subpackages io.github.elimelt.pmqueue \
+    -quiet \
+    -notimestamp
 
-# go to docs directory
-pushd docs
-
-# unzip javadoc jar
-mv javadoc.jar javadoc.jar.zip
-unzip -o javadoc.jar.zip -d javadoc
-
-# remove zip file
-rm javadoc.jar.zip
-
-# copy javadoc to parent directory
-cp -r javadoc/* .
-
-# remove javadoc directory
-rm -rf javadoc
-
-# go back to parent directory
-popd
-
-# remove old docs
 rm -rf docs_old
