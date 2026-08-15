@@ -99,6 +99,9 @@ public class DefaultMessageConsumer implements MessageConsumer {
                 } else {
                     Thread.sleep(100); // Prevent tight loop
                 }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
             } catch (Exception e) {
                 logger.warning("Error polling message: " + e.getMessage());
             }

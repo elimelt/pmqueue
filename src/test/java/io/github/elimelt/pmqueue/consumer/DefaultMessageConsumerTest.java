@@ -261,4 +261,24 @@ class DefaultMessageConsumerTest {
         assertTrue(duration >= DEFAULT_RETRY_DELAY * (DEFAULT_MAX_RETRIES - 1),
                 "Retry delay should be respected");
     }
+
+    @Test
+    @DisplayName("Consumer should exit loop and restore interrupt status when sleep is interrupted")
+    void shouldExitLoopAndRestoreInterruptOnSleepInterruption() throws Exception {
+        CountDownLatch pollLatch = new CountDownLatch(1);
+        when(mockQueue.poll()).thenAnswer(invocation -> {
+            pollLatch.countDown();
+            return null;
+        });
+
+        consumer.start();
+        assertTrue(pollLatch.await(1, TimeUnit.SECONDS));
+
+        Thread consumerThread = consumer.getConsumerThread();
+        consumerThread.interrupt();
+        consumerThread.join(1000);
+
+        assertFalse(consumerThread.isAlive(), "Consumer thread should exit the loop after interruption");
+        assertTrue(consumerThread.isInterrupted(), "Interrupt status should be restored on the thread");
+    }
 }

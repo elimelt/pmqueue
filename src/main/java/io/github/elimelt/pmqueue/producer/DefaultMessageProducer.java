@@ -42,9 +42,7 @@ public class DefaultMessageProducer implements MessageProducer {
     }
 
     @Override
-    public void close() throws Exception {
-        if (queue instanceof AutoCloseable) {
-            ((AutoCloseable) queue).close();
-        }
+    public void close() throws IOException {
+        queue.close();
     }
 }

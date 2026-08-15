@@ -47,4 +47,12 @@ public interface MessageQueue extends AutoCloseable {
      * @return true if the queue is empty, false otherwise
      */
     boolean isEmpty();
+
+    /**
+     * Closes the queue, releasing any resources it holds.
+     *
+     * @throws IOException if an I/O error occurs while closing
+     */
+    @Override
+    void close() throws IOException;
 }
