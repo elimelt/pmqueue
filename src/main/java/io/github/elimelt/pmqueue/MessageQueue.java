@@ -24,35 +24,35 @@ import io.github.elimelt.pmqueue.message.Message;
  */
 public interface MessageQueue extends AutoCloseable {
 
-    /**
-     * Stores a message in the queue.
-     *
-     * @param message the message to store
-     * @return true if the message was stored, false otherwise
-     * @throws IOException if an I/O error occurs
-     */
-    boolean offer(Message message) throws IOException;
+  /**
+   * Stores a message in the queue.
+   *
+   * @param message the message to store
+   * @return true if the message was stored, false otherwise
+   * @throws IOException if an I/O error occurs
+   */
+  boolean offer(Message message) throws IOException;
 
-    /**
-     * Retrieves a message from the queue.
-     *
-     * @return the message retrieved from the queue
-     * @throws IOException if an I/O error occurs
-     */
-    Message poll() throws IOException;
+  /**
+   * Retrieves a message from the queue.
+   *
+   * @return the message retrieved from the queue
+   * @throws IOException if an I/O error occurs
+   */
+  Message poll() throws IOException;
 
-    /**
-     * Checks if the queue is empty.
-     *
-     * @return true if the queue is empty, false otherwise
-     */
-    boolean isEmpty();
+  /**
+   * Checks if the queue is empty.
+   *
+   * @return true if the queue is empty, false otherwise
+   */
+  boolean isEmpty();
 
-    /**
-     * Closes the queue, releasing any resources it holds.
-     *
-     * @throws IOException if an I/O error occurs while closing
-     */
-    @Override
-    void close() throws IOException;
+  /**
+   * Closes the queue, releasing any resources it holds.
+   *
+   * @throws IOException if an I/O error occurs while closing
+   */
+  @Override
+  void close() throws IOException;
 }
