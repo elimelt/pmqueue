@@ -22,29 +22,27 @@ import io.github.elimelt.pmqueue.message.Message;
  * }</pre>
  */
 public class DefaultMessageProducer implements MessageProducer {
-    private final MessageQueue queue;
+  private final MessageQueue queue;
 
-    /**
-     * Creates a new DefaultMessageProducer.
-     *
-     * @param queue the MessageQueue to send messages to
-     */
-    public DefaultMessageProducer(MessageQueue queue) {
-        if (queue == null) {
-            throw new IllegalArgumentException("queue cannot be null");
-        }
-        this.queue = queue;
+  /**
+   * Creates a new DefaultMessageProducer.
+   *
+   * @param queue the MessageQueue to send messages to
+   */
+  public DefaultMessageProducer(MessageQueue queue) {
+    if (queue == null) {
+      throw new IllegalArgumentException("queue cannot be null");
     }
+    this.queue = queue;
+  }
 
-    @Override
-    public void send(byte[] data, int messageType) throws IOException {
-        queue.offer(new Message(data, messageType));
-    }
+  @Override
+  public void send(byte[] data, int messageType) throws IOException {
+    queue.offer(new Message(data, messageType));
+  }
 
-    @Override
-    public void close() throws Exception {
-        if (queue instanceof AutoCloseable) {
-            ((AutoCloseable) queue).close();
-        }
-    }
+  @Override
+  public void close() throws IOException {
+    queue.close();
+  }
 }

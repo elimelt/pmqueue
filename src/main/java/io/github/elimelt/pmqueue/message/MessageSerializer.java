@@ -1,15 +1,12 @@
 package io.github.elimelt.pmqueue.message;
 
 import java.io.IOException;
-import java.nio.Buffer;
 import java.nio.ByteBuffer;
-
-import sun.misc.Unsafe;
-import java.lang.reflect.Field;
+import java.nio.ByteOrder;
 
 /**
- * A high-performance serializer for {@link Message} objects using direct memory
- * operations.
+ * A high-performance serializer for {@link Message} objects using
+ * {@link ByteBuffer} operations.
  * This class provides methods to convert {@link Message} objects to and from
  * byte arrays
  * with minimal overhead and maximum performance.
@@ -24,10 +21,13 @@ import java.lang.reflect.Field;
  * </ul>
  *
  * <p>
+ * All multi-byte fields are written and read in the JVM's native byte order,
+ * matching the on-wire layout this class has always produced.
+ *
+ * <p>
  * Performance optimizations include:
  * <ul>
  * <li>Thread-local {@link ByteBuffer} reuse to minimize allocation
- * <li>Direct memory operations using {@link sun.misc.Unsafe}
  * <li>Buffer size doubling strategy for growing buffers
  * </ul>
  *
@@ -35,7 +35,6 @@ import java.lang.reflect.Field;
  * <strong>Note:</strong> This class is not intended for external use and
  * should only be used by the {@link Message} class's serialization mechanism.
  */
-@SuppressWarnings("deprecation")
 public class MessageSerializer {
   private static final int HEADER_SIZE = 16;
 
@@ -43,23 +42,7 @@ public class MessageSerializer {
   }
 
   private static final ThreadLocal<ByteBuffer> threadLocalBuffer = ThreadLocal
-      .withInitial(() -> ByteBuffer.allocateDirect(4096));
-
-  private static final Unsafe unsafe;
-  private static final long addressOffset;
-
-  static {
-    try {
-      Field f = Unsafe.class.getDeclaredField("theUnsafe");
-      f.setAccessible(true);
-      unsafe = (Unsafe) f.get(null);
-
-      Field addressField = Buffer.class.getDeclaredField("address");
-      addressOffset = unsafe.objectFieldOffset(addressField);
-    } catch (Exception e) {
-      throw new Error(e);
-    }
-  }
+      .withInitial(() -> ByteBuffer.allocateDirect(4096).order(ByteOrder.nativeOrder()));
 
   /**
    * Serializes a {@link Message} object into a byte array.
@@ -86,24 +69,20 @@ public class MessageSerializer {
 
     ByteBuffer buffer = threadLocalBuffer.get();
     if (buffer.capacity() < totalLength) {
-      buffer = ByteBuffer.allocateDirect(Math.max(totalLength, buffer.capacity() * 2));
+      buffer = ByteBuffer.allocateDirect(Math.max(totalLength, buffer.capacity() * 2))
+          .order(ByteOrder.nativeOrder());
       threadLocalBuffer.set(buffer);
     }
 
     buffer.clear();
-    long bufferAddress = unsafe.getLong(buffer, addressOffset);
-
-    unsafe.putLong(bufferAddress, message.getTimestamp());
-    unsafe.putInt(bufferAddress + 8, message.getMessageType());
-    unsafe.putInt(bufferAddress + 12, data.length);
-    unsafe.copyMemory(data, Unsafe.ARRAY_BYTE_BASE_OFFSET,
-        null, bufferAddress + HEADER_SIZE,
-        data.length);
+    buffer.putLong(message.getTimestamp());
+    buffer.putInt(message.getMessageType());
+    buffer.putInt(data.length);
+    buffer.put(data);
 
     byte[] result = new byte[totalLength];
-    unsafe.copyMemory(null, bufferAddress,
-        result, Unsafe.ARRAY_BYTE_BASE_OFFSET,
-        totalLength);
+    buffer.flip();
+    buffer.get(result);
 
     return result;
   }
@@ -116,7 +95,7 @@ public class MessageSerializer {
    * <p>
    * This method creates a new Message object with the original timestamp
    * preserved through anonymous subclassing. The message type and data are
-   * extracted from the serialized format using direct memory operations for
+   * extracted from the serialized format using a {@link ByteBuffer} view for
    * optimal performance.
    *
    * @param bytes the byte array containing the serialized message
@@ -129,18 +108,18 @@ public class MessageSerializer {
       throw new IOException("Invalid message: too short");
     }
 
-    long timestamp = unsafe.getLong(bytes, Unsafe.ARRAY_BYTE_BASE_OFFSET);
-    int type = unsafe.getInt(bytes, Unsafe.ARRAY_BYTE_BASE_OFFSET + 8);
-    int length = unsafe.getInt(bytes, Unsafe.ARRAY_BYTE_BASE_OFFSET + 12);
+    ByteBuffer buffer = ByteBuffer.wrap(bytes).order(ByteOrder.nativeOrder());
+    long timestamp = buffer.getLong(0);
+    int type = buffer.getInt(8);
+    int length = buffer.getInt(12);
 
     if (length < 0 || length > bytes.length - HEADER_SIZE) {
       throw new IOException("Invalid message length");
     }
 
     byte[] data = new byte[length];
-    unsafe.copyMemory(bytes, Unsafe.ARRAY_BYTE_BASE_OFFSET + HEADER_SIZE,
-        data, Unsafe.ARRAY_BYTE_BASE_OFFSET,
-        length);
+    buffer.position(HEADER_SIZE);
+    buffer.get(data);
 
     return new Message(data, type) {
       @Override
