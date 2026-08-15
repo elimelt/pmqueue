@@ -159,20 +159,78 @@ class QueueFactoryTest {
   }
 
   @Test
-  @DisplayName("Custom queue builder should create queue with specified settings")
-  void customQueueBuilderCreation() throws Exception {
-    String filePath = getTestFilePath("custom");
-    MessageQueue queue = new QueueFactory.CustomQueueBuilder()
-        .withFilePath(filePath)
-        .withDefaultBufferSize(2 * 1024 * 1024)
-        .withMaxBufferSize(4 * 1024 * 1024)
-        .withBatchThreshold(64)
-        .withChecksumEnabled(true)
-        .withDebugEnabled(true)
-        .build();
+  @DisplayName("Factory methods should be equivalent to delegating to their preset")
+  void factoryMethodsMatchPresetValues() throws Exception {
+    // Each createXxxQueue(String) method now delegates directly to a
+    // QueuePreset. Verify the preset's configure() still produces the exact
+    // QueueConfig values the original hand-written factory methods used, so
+    // the presets remain the single source of truth without value drift.
+    assertPresetConfig(QueueFactory.QueuePreset.HIGH_THROUGHPUT, config -> {
+      assertEquals(4 * 1024 * 1024, config.getDefaultBufferSize());
+      assertEquals(16 * 1024 * 1024, config.getMaxBufferSize());
+      assertEquals(256, config.getBatchThreshold());
+      assertFalse(config.isChecksumEnabled());
+    });
 
+    assertPresetConfig(QueueFactory.QueuePreset.DURABLE, config -> {
+      assertEquals(1024 * 1024, config.getDefaultBufferSize());
+      assertEquals(4 * 1024 * 1024, config.getMaxBufferSize());
+      assertEquals(32, config.getBatchThreshold());
+      assertTrue(config.isChecksumEnabled());
+      assertTrue(config.isDebugEnabled());
+    });
+
+    assertPresetConfig(QueueFactory.QueuePreset.LOW_MEMORY, config -> {
+      assertEquals(256 * 1024, config.getDefaultBufferSize());
+      assertEquals(1024 * 1024, config.getMaxBufferSize());
+      assertEquals(16, config.getBatchThreshold());
+      assertEquals(1024L * 1024L * 1024L, config.getMaxFileSize());
+    });
+
+    assertPresetConfig(QueueFactory.QueuePreset.LARGE_MESSAGE, config -> {
+      assertEquals(16 * 1024 * 1024, config.getDefaultBufferSize());
+      assertEquals(32 * 1024 * 1024, config.getMaxBufferSize());
+      assertEquals(10L * 1024L * 1024L * 1024L, config.getMaxFileSize());
+      assertEquals(16, config.getBatchThreshold());
+    });
+
+    assertPresetConfig(QueueFactory.QueuePreset.DEBUG, config -> {
+      assertTrue(config.isDebugEnabled());
+      assertTrue(config.isChecksumEnabled());
+      assertEquals(1024 * 1024, config.getDefaultBufferSize());
+      assertEquals(2 * 1024 * 1024, config.getMaxBufferSize());
+      assertEquals(32, config.getBatchThreshold());
+    });
+
+    // Also confirm the queues built by the factory methods and by the
+    // presets both actually work end to end (open, read/write, close).
+    assertQueueWorks(QueueFactory.createHighThroughputQueue(getTestFilePath("factory-high-throughput")));
+    assertQueueWorks(QueueFactory.QueuePreset.HIGH_THROUGHPUT.createQueue(getTestFilePath("preset-high-throughput")));
+
+    assertQueueWorks(QueueFactory.createDurableQueue(getTestFilePath("factory-durable")));
+    assertQueueWorks(QueueFactory.QueuePreset.DURABLE.createQueue(getTestFilePath("preset-durable")));
+
+    assertQueueWorks(QueueFactory.createLowMemoryQueue(getTestFilePath("factory-low-memory")));
+    assertQueueWorks(QueueFactory.QueuePreset.LOW_MEMORY.createQueue(getTestFilePath("preset-low-memory")));
+
+    assertQueueWorks(QueueFactory.createLargeMessageQueue(getTestFilePath("factory-large-message")));
+    assertQueueWorks(QueueFactory.QueuePreset.LARGE_MESSAGE.createQueue(getTestFilePath("preset-large-message")));
+
+    assertQueueWorks(QueueFactory.createDebugQueue(getTestFilePath("factory-debug")));
+    assertQueueWorks(QueueFactory.QueuePreset.DEBUG.createQueue(getTestFilePath("preset-debug")));
+  }
+
+  private void assertPresetConfig(QueueFactory.QueuePreset preset, java.util.function.Consumer<QueueConfig> assertions)
+      throws IOException {
+    QueueConfig.Builder builder = new QueueConfig.Builder().filePath(getTestFilePath("config-" + preset.name()));
+    preset.configure(builder);
+    assertions.accept(builder.build());
+  }
+
+  private void assertQueueWorks(MessageQueue queue) throws Exception {
     assertNotNull(queue);
-    assertTrue(new File(filePath).exists());
+    assertTrue(queue.offer(new Message("test".getBytes(), 1)));
+    assertNotNull(queue.poll());
     queue.close();
   }
 
