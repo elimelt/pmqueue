@@ -1,20 +1,11 @@
 package io.github.elimelt.pmqueue.message;
 
-import java.io.IOException;
-import java.io.ObjectInputStream;
-import java.io.ObjectOutputStream;
-import java.io.Serializable;
 import java.lang.ref.SoftReference;
-import sun.misc.Unsafe;
-import java.lang.reflect.Field;
+import java.util.Arrays;
 
 /**
  * A high-performance, immutable message container optimized for memory
  * efficiency and fast access.
- * This class uses direct memory operations via {@link sun.misc.Unsafe} for
- * improved performance
- * and implements custom serialization for better control over the serialization
- * process.
  *
  * <p>
  * The message contains:
@@ -27,16 +18,12 @@ import java.lang.reflect.Field;
  * <p>
  * This class implements optimizations including:
  * <ul>
- * <li>Direct memory access using Unsafe for field operations
  * <li>Cached hash code using soft references to allow GC if memory is tight
- * <li>Custom serialization implementation for performance
  * </ul>
  *
  * @see MessageSerializer
  */
-@SuppressWarnings("deprecation")
-public class Message implements Serializable {
-  private static final long serialVersionUID = 1L;
+public class Message {
 
   /**
    * Soft reference to cache the hash code for this message.
@@ -60,38 +47,6 @@ public class Message implements Serializable {
   private final int length;
 
   /**
-   * The Unsafe instance for direct memory access.
-   */
-  private static final Unsafe unsafe;
-  /**
-   * The offset of the data field.
-   */
-  @SuppressWarnings("unused")
-  private static final long dataOffset;
-  /**
-   * The offset of the timestamp field.
-   */
-  private static final long timestampOffset;
-  /**
-   * The offset of the messageType field.
-   */
-  private static final long messageTypeOffset;
-
-  static {
-    try {
-      Field f = Unsafe.class.getDeclaredField("theUnsafe");
-      f.setAccessible(true);
-      unsafe = (Unsafe) f.get(null);
-
-      dataOffset = unsafe.objectFieldOffset(Message.class.getDeclaredField("data"));
-      timestampOffset = unsafe.objectFieldOffset(Message.class.getDeclaredField("timestamp"));
-      messageTypeOffset = unsafe.objectFieldOffset(Message.class.getDeclaredField("messageType"));
-    } catch (Exception e) {
-      throw new Error(e);
-    }
-  }
-
-  /**
    * Creates a new Message with the specified data and message type.
    * The message's timestamp is automatically set to the current system time.
    * A defensive copy of the input data is made to ensure immutability.
@@ -104,12 +59,8 @@ public class Message implements Serializable {
     if (data == null) {
       throw new NullPointerException("Message data cannot be null");
     }
-    int dataLength = data.length;
-    this.data = new byte[dataLength];
-    unsafe.copyMemory(data, Unsafe.ARRAY_BYTE_BASE_OFFSET,
-        this.data, Unsafe.ARRAY_BYTE_BASE_OFFSET,
-        dataLength);
-    this.length = dataLength;
+    this.data = data.clone();
+    this.length = this.data.length;
     this.timestamp = System.currentTimeMillis();
     this.messageType = messageType;
   }
@@ -121,14 +72,7 @@ public class Message implements Serializable {
    * @return a copy of the message data as a byte array
    */
   public byte[] getData() {
-    if (data == null) {
-      return null;
-    }
-    byte[] copy = new byte[length];
-    unsafe.copyMemory(data, Unsafe.ARRAY_BYTE_BASE_OFFSET,
-        copy, Unsafe.ARRAY_BYTE_BASE_OFFSET,
-        length);
-    return copy;
+    return Arrays.copyOf(data, length);
   }
 
   /**
@@ -137,7 +81,7 @@ public class Message implements Serializable {
    * @return the message creation timestamp as milliseconds since epoch
    */
   public long getTimestamp() {
-    return unsafe.getLong(this, timestampOffset);
+    return timestamp;
   }
 
   /**
@@ -146,7 +90,7 @@ public class Message implements Serializable {
    * @return the integer message type
    */
   public int getMessageType() {
-    return unsafe.getInt(this, messageTypeOffset);
+    return messageType;
   }
 
   /**
@@ -179,27 +123,25 @@ public class Message implements Serializable {
   }
 
   /**
-   * Custom serialization implementation for better performance.
-   * Writes the message fields directly to the output stream.
+   * Compares this message to another object for equality.
+   * Two messages are equal if they have the same data, timestamp, and message
+   * type, i.e. the same fields used to compute {@link #hashCode()}.
    *
-   * @param out the output stream to write to
-   * @throws IOException if an I/O error occurs
+   * @param obj the object to compare against
+   * @return true if the given object is a Message with the same data,
+   *         timestamp, and message type
    */
-  private void writeObject(ObjectOutputStream out) throws IOException {
-    out.writeLong(unsafe.getLong(this, timestampOffset));
-    out.writeInt(unsafe.getInt(this, messageTypeOffset));
-    out.writeInt(length);
-    out.write(data, 0, length);
-  }
-
-  /**
-   * Disabled default deserialization.
-   * Use {@link MessageSerializer} instead for proper deserialization.
-   *
-   * @param in the input stream to read from
-   * @throws IOException always, to prevent default deserialization
-   */
-  private void readObject(ObjectInputStream in) throws IOException {
-    throw new IOException("Use MessageSerializer instead");
+  @Override
+  public boolean equals(Object obj) {
+    if (this == obj) {
+      return true;
+    }
+    if (!(obj instanceof Message)) {
+      return false;
+    }
+    Message other = (Message) obj;
+    return timestamp == other.timestamp
+        && messageType == other.messageType
+        && Arrays.equals(data, other.data);
   }
 }
